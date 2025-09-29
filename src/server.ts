@@ -48,13 +48,34 @@ function attachSwapListener(contract: ethers.Contract) {
   contract.on(
     "Swap",
     (sender, amount0In, amount1In, amount0Out, amount1Out, to, event) => {
-      const isBuy = ethers.toBigInt(amount1Out) > 0n;
+      const amount0InBN = ethers.toBigInt(amount0In);
+      const amount1InBN = ethers.toBigInt(amount1In);
+      const amount0OutBN = ethers.toBigInt(amount0Out);
+      const amount1OutBN = ethers.toBigInt(amount1Out);
 
-      const ocicatRaw = isBuy ? amount1Out : amount1In;
-      const bnbRaw = isBuy ? amount0In : amount0Out;
+      let ocicatRaw: bigint;
+      let bnbRaw: bigint;
+      let action: "buy" | "sell";
+
+      if (amount1OutBN > 0n) {
+        // BUY: Ocicat out, BNB in
+        ocicatRaw = amount1OutBN;
+        bnbRaw = amount0InBN;
+        action = "buy";
+      } else if (amount1InBN > 0n) {
+        // SELL: Ocicat in, BNB out
+        ocicatRaw = amount1InBN;
+        bnbRaw = amount0OutBN;
+        action = "sell";
+      } else {
+        // Invalid trade: no Ocicat movement
+        return;
+      }
 
       const ocicatAmount = parseFloat(ethers.formatUnits(ocicatRaw, 6));
       const bnbAmount = parseFloat(ethers.formatUnits(bnbRaw, 18));
+
+      if (ocicatAmount === 0 || bnbAmount === 0) return; // skip empty trades
 
       const trade: Trade = {
         hash: event?.log?.transactionHash ?? "unknown",
@@ -63,13 +84,14 @@ function attachSwapListener(contract: ethers.Contract) {
         seller: to,
         amount: ocicatAmount,
         bnbAmount: bnbAmount,
-        action: isBuy ? "buy" : "sell",
+        action,
       };
 
       emitNewTrade(trade);
     }
   );
 }
+
 
 
 
