@@ -4,6 +4,7 @@ import http from "http";
 import { Server as SocketIOServer } from "socket.io";
 import cors from "cors";
 import compression from "compression";
+import { startSelfPing } from "./cron/selfPing";
 
 const variable = "76fe10d22ab94317bceaa64fa2974ee0";
 
@@ -195,3 +196,14 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log(`Socket.IO server running on port ${PORT}`);
 });
+
+
+
+
+
+// ping route
+app.get("/ping", (req, res) => {
+  res.status(200).send("pong");
+});
+
+startSelfPing();
