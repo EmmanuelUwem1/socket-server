@@ -4,7 +4,7 @@ import http from "http";
 import { Server as SocketIOServer } from "socket.io";
 import cors from "cors";
 import compression from "compression";
-import { startSelfPing } from "./cron/selfPing";
+import { startSelfPing } from "./cron/selfPing.js";
 
 const variable = "76fe10d22ab94317bceaa64fa2974ee0";
 
