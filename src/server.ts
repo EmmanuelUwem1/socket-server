@@ -5,8 +5,11 @@ import { Server as SocketIOServer } from "socket.io";
 import cors from "cors";
 import compression from "compression";
 import { startSelfPing } from "./cron/selfPing.js";
+import dotenv from "dotenv";
 
-const variable = "76fe10d22ab94317bceaa64fa2974ee0";
+dotenv.config();
+
+const variable = process.env.NODE_REAL_API_KEY!;
 
 const app = express();
 app.use(cors());

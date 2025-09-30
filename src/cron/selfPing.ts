@@ -1,7 +1,10 @@
 import cron from "node-cron";
 import https from "https";
 
-const PING_URL = "https://socket-server-qdtc.onrender.com/ping";
+
+
+const PING_URL =  process.env.PING_URL!;
+;
 
 export const startSelfPing = () => {
   cron.schedule("*/13 * * * *", () => {
