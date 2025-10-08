@@ -6,6 +6,9 @@ import cors from "cors";
 import compression from "compression";
 import { startSelfPing } from "./cron/selfPing.js";
 import dotenv from "dotenv";
+import tradesRouter from "./routes/tradesRoute.js";
+
+
 
 dotenv.config();
 
@@ -14,6 +17,7 @@ const variable = process.env.NODE_REAL_API_KEY!;
 const app = express();
 app.use(cors());
 app.use(compression());
+app.use("/trades", tradesRouter);
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
