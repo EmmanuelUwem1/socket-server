@@ -37,6 +37,7 @@ type Trade = {
   source: string;
   ticker?: string;
   image?: string;
+  tokenAddress?: string;
 };
 
 
@@ -66,11 +67,11 @@ externalSocket.on("connect", () => {
   console.log("Connected to external transaction stream");
 });
 
-externalSocket.on("transactions:new", (tx) => {
+externalSocket.on("transaction:new", (tx) => {
   console.log("📦 Received external transaction:", tx);
 
   const trade: Trade = {
-    hash: tx.hash ?? "unknown",
+    hash: tx.txHash ?? "unknown",
     time: new Date().toISOString(),
     buyer: tx.wallet ?? "unknown",
     seller: "",
@@ -80,6 +81,8 @@ externalSocket.on("transactions:new", (tx) => {
     source: "external",
     ticker: tx.tokenDetails?.ticker ?? "Unknown",
     image: tx.tokenDetails?.image ?? "/default_token.png",
+    
+  tokenAddress: tx.tokenAddress?.toLowerCase() ?? "unknown",
   };
 
   console.log("✅ Normalized external trade:", trade);
@@ -158,6 +161,7 @@ function attachSwapListener(contract: ethers.Contract) {
         bnbAmount: bnbAmount,
         action,
         source: "ocicat",
+        tokenAddress: "0xE53D384Cf33294C1882227ae4f90D64cF2a5dB70",
       };
 
       emitNewTrade(trade);
@@ -195,7 +199,6 @@ async function fetchInitialTrades() {
       const amountOutBN = ethers.toBigInt(decoded.amount1Out);
       const amountInBN = ethers.toBigInt(decoded.amount0In);
 
-      console.log(`📥 Loaded ${initialTrades.length} initial Ocicat trades`);
 
 
       return {
@@ -209,6 +212,11 @@ async function fetchInitialTrades() {
         source: "ocicat",
       };
     });
+
+          console.log(
+            `📥 Loaded ${initialTrades.length} initial Ocicat trades`
+          );
+
 
     tradeBuffer = [...initialTrades, ...tradeBuffer].slice(0, 100);
     saveTradesToFile(tradeBuffer);
