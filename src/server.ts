@@ -35,7 +35,10 @@ type Trade = {
   bnbAmount: number;
   action: string;
   source: string;
+  ticker?: string;
+  image?: string;
 };
+
 
 //  File-based trade store
 const tradeFilePath = path.join(process.cwd(), "trades.json");
@@ -64,7 +67,7 @@ externalSocket.on("connect", () => {
 });
 
 externalSocket.on("transactions:new", (tx) => {
-  console.log("Received external transaction:", tx);
+  console.log("📦 Received external transaction:", tx);
 
   const trade: Trade = {
     hash: tx.hash ?? "unknown",
@@ -75,7 +78,11 @@ externalSocket.on("transactions:new", (tx) => {
     bnbAmount: tx.amountInChainCurrency ?? 0,
     action: tx.type ?? "buy",
     source: "external",
+    ticker: tx.tokenDetails?.ticker ?? "Unknown",
+    image: tx.tokenDetails?.image ?? "/default_token.png",
   };
+
+  console.log("✅ Normalized external trade:", trade);
 
   tradeBuffer.unshift(trade);
   if (tradeBuffer.length > 100) tradeBuffer = tradeBuffer.slice(0, 100);
@@ -83,15 +90,18 @@ externalSocket.on("transactions:new", (tx) => {
   io.emit("transaction:new", trade);
 });
 
+
 // Client connection
 io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
+  console.log(`🔌 Client connected: ${socket.id}`);
+  console.log("📤 Sending trade history...");
   socket.emit("transaction:history", tradeBuffer);
 
   socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
+    console.log(`❌ Client disconnected: ${socket.id}`);
   });
 });
+
 
 // Ocicat trade listener
 const pairAddress = "0x1df65d3a75aecd000a9c17c97e99993af01dbcd1";
@@ -101,6 +111,11 @@ const pairABI = [
 
 function emitNewTrade(trade: Trade) {
   trade.source = "ocicat";
+  trade.ticker = "OCICAT";
+  trade.image = "/cat_bg.jpg";
+
+  console.log("🐾 Emitting Ocicat trade:", trade);
+
   tradeBuffer.unshift(trade);
   if (tradeBuffer.length > 100) tradeBuffer = tradeBuffer.slice(0, 100);
   saveTradesToFile(tradeBuffer);
@@ -179,6 +194,9 @@ async function fetchInitialTrades() {
       const decoded = iface.decodeEventLog("Swap", log.data, log.topics);
       const amountOutBN = ethers.toBigInt(decoded.amount1Out);
       const amountInBN = ethers.toBigInt(decoded.amount0In);
+
+      console.log(`📥 Loaded ${initialTrades.length} initial Ocicat trades`);
+
 
       return {
         hash: log.transactionHash,
