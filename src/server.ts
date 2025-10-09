@@ -6,14 +6,38 @@ import cors from "cors";
 import compression from "compression";
 import { startSelfPing } from "./cron/selfPing.js";
 import dotenv from "dotenv";
-import transactionsRouter from "./routes/transactions.js";
-import { transactionStore } from "./store/transactions.js";
 import { io as ClientIO } from "socket.io-client";
-dotenv.config();
-
 import fs from "fs";
 import path from "path";
 
+dotenv.config();
+
+const variable = process.env.NODE_REAL_API_KEY!;
+const app = express();
+app.use(cors());
+app.use(compression());
+
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+
+//  Trade type
+type Trade = {
+  hash: string;
+  time: string;
+  buyer?: string;
+  seller?: string;
+  amount: number;
+  bnbAmount: number;
+  action: string;
+  source: string;
+};
+
+//  File-based trade store
 const tradeFilePath = path.join(process.cwd(), "trades.json");
 
 function saveTradesToFile(trades: Trade[]) {
@@ -28,23 +52,9 @@ function loadTradesFromFile(): Trade[] {
   return [];
 }
 
+let tradeBuffer: Trade[] = loadTradesFromFile();
 
-
-const variable = process.env.NODE_REAL_API_KEY!;
-const app = express();
-app.use(cors());
-app.use(compression());
-app.use("/transactions", transactionsRouter);
-
-const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-  },
-});
-
-// 🔌 External WebSocket listener for transactions
+//  External transaction stream
 const externalSocket = ClientIO("https://fudclub-test.up.railway.app/events", {
   transports: ["websocket"],
 });
@@ -55,45 +65,44 @@ externalSocket.on("connect", () => {
 
 externalSocket.on("transactions:new", (tx) => {
   console.log("Received external transaction:", tx);
-  transactionStore.unshift(tx);
-  if (transactionStore.length > 100) {
-    transactionStore.splice(100);
-  }
-  io.emit("transaction:new", tx);
+
+  const trade: Trade = {
+    hash: tx.hash ?? "unknown",
+    time: new Date().toISOString(),
+    buyer: tx.wallet ?? "unknown",
+    seller: "",
+    amount: tx.amountInToken ?? 0,
+    bnbAmount: tx.amountInChainCurrency ?? 0,
+    action: tx.type ?? "buy",
+    source: "external",
+  };
+
+  tradeBuffer.unshift(trade);
+  if (tradeBuffer.length > 100) tradeBuffer = tradeBuffer.slice(0, 100);
+  saveTradesToFile(tradeBuffer);
+  io.emit("transaction:new", trade);
 });
 
-// Emit full transaction history on first connection
+// Client connection
 io.on("connection", (socket) => {
   console.log("Client connected:", socket.id);
-  socket.emit("transaction:history", transactionStore);
+  socket.emit("transaction:history", tradeBuffer);
 
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
   });
 });
 
-// Trade logic
+// Ocicat trade listener
 const pairAddress = "0x1df65d3a75aecd000a9c17c97e99993af01dbcd1";
 const pairABI = [
   "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
 ];
 
-type Trade = {
-  hash: string;
-  time: string;
-  buyer: string;
-  seller: string;
-  amount: number;
-  bnbAmount: number;
-  action: "buy" | "sell";
-};
-
-let tradeBuffer: Trade[] = loadTradesFromFile();
-const clientLastRequest: Record<string, number> = {};
-
 function emitNewTrade(trade: Trade) {
+  trade.source = "ocicat";
   tradeBuffer.unshift(trade);
-  if (tradeBuffer.length > 30) tradeBuffer = tradeBuffer.slice(0, 30);
+  if (tradeBuffer.length > 100) tradeBuffer = tradeBuffer.slice(0, 100);
   saveTradesToFile(tradeBuffer);
   io.emit("trades", trade);
 }
@@ -109,7 +118,7 @@ function attachSwapListener(contract: ethers.Contract) {
 
       let ocicatRaw: bigint;
       let bnbRaw: bigint;
-      let action: "buy" | "sell";
+      let action: string;
 
       if (amount1OutBN > 0n) {
         ocicatRaw = amount1OutBN;
@@ -133,6 +142,7 @@ function attachSwapListener(contract: ethers.Contract) {
         amount: ocicatAmount,
         bnbAmount: bnbAmount,
         action,
+        source: "ocicat",
       };
 
       emitNewTrade(trade);
@@ -140,6 +150,7 @@ function attachSwapListener(contract: ethers.Contract) {
   );
 }
 
+//  Initial trade fetch
 async function fetchInitialTrades() {
   try {
     const rpcProvider = new ethers.JsonRpcProvider(
@@ -164,7 +175,7 @@ async function fetchInitialTrades() {
         : b.transactionIndex - a.transactionIndex
     );
 
-    tradeBuffer = sortedLogs.slice(0, 30).map((log) => {
+    const initialTrades = sortedLogs.slice(0, 30).map((log) => {
       const decoded = iface.decodeEventLog("Swap", log.data, log.topics);
       const amountOutBN = ethers.toBigInt(decoded.amount1Out);
       const amountInBN = ethers.toBigInt(decoded.amount0In);
@@ -177,20 +188,24 @@ async function fetchInitialTrades() {
         amount: parseFloat(ethers.formatUnits(amountOutBN, 6)),
         bnbAmount: parseFloat(ethers.formatUnits(amountInBN, 18)),
         action: amountOutBN > 0n ? "buy" : "sell",
+        source: "ocicat",
       };
     });
+
+    tradeBuffer = [...initialTrades, ...tradeBuffer].slice(0, 100);
+    saveTradesToFile(tradeBuffer);
   } catch (err) {
     console.error("Failed to fetch initial trades:", err);
   }
 }
 
+// 🔁 WebSocket reconnect logic
 let provider = new ethers.WebSocketProvider(
   `wss://bsc-mainnet.nodereal.io/ws/v1/${variable}`
 );
 let contract = new ethers.Contract(pairAddress, pairABI, provider);
 attachSwapListener(contract);
 
-//  Call fetchInitialTrades immediately
 (async () => {
   await fetchInitialTrades();
 })();
