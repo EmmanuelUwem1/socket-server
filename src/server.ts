@@ -6,18 +6,17 @@ import cors from "cors";
 import compression from "compression";
 import { startSelfPing } from "./cron/selfPing.js";
 import dotenv from "dotenv";
-import tradesRouter from "./routes/tradesRoute.js";
-
-
+import transactionsRouter from "./routes/transactions.js";
+import { transactionStore } from "./store/transactions.js";
+import { io as ClientIO } from "socket.io-client";
 
 dotenv.config();
 
 const variable = process.env.NODE_REAL_API_KEY!;
-
 const app = express();
 app.use(cors());
 app.use(compression());
-app.use("/trades", tradesRouter);
+app.use("/transactions", transactionsRouter);
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
@@ -26,6 +25,40 @@ const io = new SocketIOServer(server, {
     methods: ["GET", "POST"],
   },
 });
+
+// 🔌 External WebSocket listener for transactions
+const externalSocket = ClientIO("https://fudclub-test.up.railway.app/events", {
+  transports: ["websocket"],
+});
+
+externalSocket.on("connect", () => {
+  console.log("Connected to external transaction stream");
+});
+
+externalSocket.on("transactions:new", (tx) => {
+  console.log("Received external transaction:", tx);
+  transactionStore.unshift(tx);
+  if (transactionStore.length > 100) {
+    transactionStore.splice(100);
+  }
+  io.emit("transaction:new", tx);
+});
+
+// Emit full transaction history on first connection
+io.on("connection", (socket) => {
+  console.log("Client connected:", socket.id);
+  socket.emit("transaction:history", transactionStore);
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
+});
+
+// 🛠 Trade logic
+const pairAddress = "0x1df65d3a75aecd000a9c17c97e99993af01dbcd1";
+const pairABI = [
+  "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
+];
 
 type Trade = {
   hash: string;
@@ -37,19 +70,13 @@ type Trade = {
   action: "buy" | "sell";
 };
 
-const pairAddress = "0x1df65d3a75aecd000a9c17c97e99993af01dbcd1";
-const pairABI = [
-  "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
-];
-
 let tradeBuffer: Trade[] = [];
 const clientLastRequest: Record<string, number> = {};
 
 function emitNewTrade(trade: Trade) {
   tradeBuffer.unshift(trade);
   if (tradeBuffer.length > 30) tradeBuffer = tradeBuffer.slice(0, 30);
-  console.log("New Trade:", trade);
-  io.emit("trades", trade); // emit only the latest trade
+  io.emit("trades", trade);
 }
 
 function attachSwapListener(contract: ethers.Contract) {
@@ -66,24 +93,18 @@ function attachSwapListener(contract: ethers.Contract) {
       let action: "buy" | "sell";
 
       if (amount1OutBN > 0n) {
-        // BUY: Ocicat out, BNB in
         ocicatRaw = amount1OutBN;
         bnbRaw = amount0InBN;
         action = "buy";
       } else if (amount1InBN > 0n) {
-        // SELL: Ocicat in, BNB out
         ocicatRaw = amount1InBN;
         bnbRaw = amount0OutBN;
         action = "sell";
-      } else {
-        // Invalid trade: no Ocicat movement
-        return;
-      }
+      } else return;
 
       const ocicatAmount = parseFloat(ethers.formatUnits(ocicatRaw, 6));
       const bnbAmount = parseFloat(ethers.formatUnits(bnbRaw, 18));
-
-      if (ocicatAmount === 0 || bnbAmount === 0) return; // skip empty trades
+      if (ocicatAmount === 0 || bnbAmount === 0) return;
 
       const trade: Trade = {
         hash: event?.log?.transactionHash ?? "unknown",
@@ -100,24 +121,16 @@ function attachSwapListener(contract: ethers.Contract) {
   );
 }
 
-
-
-
 async function fetchInitialTrades() {
   try {
     const rpcProvider = new ethers.JsonRpcProvider(
       `https://bsc-mainnet.nodereal.io/v1/${variable}`
     );
-
     const iface = new Interface(pairABI);
     const currentBlock = await rpcProvider.getBlockNumber();
     const fromBlock = currentBlock - 500;
-
     const swapEvent = iface.getEvent("Swap");
-    if (!swapEvent) {
-      console.error("Swap event not found in ABI");
-      return;
-    }
+    if (!swapEvent) return;
 
     const logs = await rpcProvider.getLogs({
       address: pairAddress,
@@ -126,12 +139,11 @@ async function fetchInitialTrades() {
       topics: [swapEvent.topicHash],
     });
 
-    const sortedLogs = logs.sort((a, b) => {
-      if (a.blockNumber !== b.blockNumber) {
-        return b.blockNumber - a.blockNumber;
-      }
-      return b.transactionIndex - a.transactionIndex;
-    });
+    const sortedLogs = logs.sort((a, b) =>
+      a.blockNumber !== b.blockNumber
+        ? b.blockNumber - a.blockNumber
+        : b.transactionIndex - a.transactionIndex
+    );
 
     tradeBuffer = sortedLogs.slice(0, 30).map((log) => {
       const decoded = iface.decodeEventLog("Swap", log.data, log.topics);
@@ -159,33 +171,10 @@ let provider = new ethers.WebSocketProvider(
 let contract = new ethers.Contract(pairAddress, pairABI, provider);
 attachSwapListener(contract);
 
-io.on("connection", async (socket) => {
-  const ip = socket.handshake.address;
-  const now = Date.now();
-
-  if (now - (clientLastRequest[ip] || 0) < 5000) {
-    socket.disconnect(true);
-    return;
-  }
-
-  clientLastRequest[ip] = now;
-  console.log(`Client connected: ${ip}`);
-
-  if (tradeBuffer.length === 0) {
-    await fetchInitialTrades();
-  }
-
-  socket.emit("trades", tradeBuffer); // send full buffer once
-
-  socket.on("disconnect", () => {
-    console.log(`Client disconnected: ${ip}`);
-  });
-});
-
-setInterval(() => {
-  const mem = process.memoryUsage();
-  console.log(`Memory: RSS ${mem.rss}, Heap Used ${mem.heapUsed}`);
-}, 60000);
+//  Call fetchInitialTrades immediately
+(async () => {
+  await fetchInitialTrades();
+})();
 
 (provider.websocket as any).on("close", () => {
   console.log("WebSocket closed. Reconnecting...");
@@ -199,18 +188,13 @@ setInterval(() => {
   }, 3000);
 });
 
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`Socket.IO server running on port ${PORT}`);
-});
-
-
-
-
-
-// ping route
 app.get("/ping", (req, res) => {
   res.status(200).send("pong");
 });
 
 startSelfPing();
+
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`Socket.IO server running on port ${PORT}`);
+});
