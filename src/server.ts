@@ -9,8 +9,26 @@ import dotenv from "dotenv";
 import transactionsRouter from "./routes/transactions.js";
 import { transactionStore } from "./store/transactions.js";
 import { io as ClientIO } from "socket.io-client";
-
 dotenv.config();
+
+import fs from "fs";
+import path from "path";
+
+const tradeFilePath = path.join(process.cwd(), "trades.json");
+
+function saveTradesToFile(trades: Trade[]) {
+  fs.writeFileSync(tradeFilePath, JSON.stringify(trades, null, 2));
+}
+
+function loadTradesFromFile(): Trade[] {
+  if (fs.existsSync(tradeFilePath)) {
+    const data = fs.readFileSync(tradeFilePath, "utf-8");
+    return JSON.parse(data);
+  }
+  return [];
+}
+
+
 
 const variable = process.env.NODE_REAL_API_KEY!;
 const app = express();
@@ -54,7 +72,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// 🛠 Trade logic
+// Trade logic
 const pairAddress = "0x1df65d3a75aecd000a9c17c97e99993af01dbcd1";
 const pairABI = [
   "event Swap(address indexed sender, uint amount0In, uint amount1In, uint amount0Out, uint amount1Out, address indexed to)",
@@ -70,12 +88,13 @@ type Trade = {
   action: "buy" | "sell";
 };
 
-let tradeBuffer: Trade[] = [];
+let tradeBuffer: Trade[] = loadTradesFromFile();
 const clientLastRequest: Record<string, number> = {};
 
 function emitNewTrade(trade: Trade) {
   tradeBuffer.unshift(trade);
   if (tradeBuffer.length > 30) tradeBuffer = tradeBuffer.slice(0, 30);
+  saveTradesToFile(tradeBuffer);
   io.emit("trades", trade);
 }
 
