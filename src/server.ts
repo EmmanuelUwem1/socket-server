@@ -68,7 +68,7 @@ externalSocket.on("connect", () => {
 });
 
 externalSocket.on("transaction:new", (tx) => {
-  console.log("📦 Received external transaction:", tx);
+  console.log("Received external transaction:", tx);
 
   const trade: Trade = {
     hash: tx.txHash ?? "unknown",
@@ -85,7 +85,7 @@ externalSocket.on("transaction:new", (tx) => {
   tokenAddress: tx.tokenAddress?.toLowerCase() ?? "unknown",
   };
 
-  console.log("✅ Normalized external trade:", trade);
+  console.log("Normalized external trade:", trade);
 
   tradeBuffer.unshift(trade);
   if (tradeBuffer.length > 100) tradeBuffer = tradeBuffer.slice(0, 100);
@@ -96,12 +96,12 @@ externalSocket.on("transaction:new", (tx) => {
 
 // Client connection
 io.on("connection", (socket) => {
-  console.log(`🔌 Client connected: ${socket.id}`);
-  console.log("📤 Sending trade history...");
+  console.log(` Client connected: ${socket.id}`);
+  console.log("Sending trade history...");
   socket.emit("transaction:history", tradeBuffer);
 
   socket.on("disconnect", () => {
-    console.log(`❌ Client disconnected: ${socket.id}`);
+    console.log(`Client disconnected: ${socket.id}`);
   });
 });
 
@@ -117,7 +117,7 @@ function emitNewTrade(trade: Trade) {
   trade.ticker = "OCICAT";
   trade.image = "/cat_bg.jpg";
 
-  console.log("🐾 Emitting Ocicat trade:", trade);
+  console.log("Emitting Ocicat trade:", trade);
 
   tradeBuffer.unshift(trade);
   if (tradeBuffer.length > 100) tradeBuffer = tradeBuffer.slice(0, 100);
@@ -214,7 +214,7 @@ async function fetchInitialTrades() {
     });
 
           console.log(
-            `📥 Loaded ${initialTrades.length} initial Ocicat trades`
+            ` Loaded ${initialTrades.length} initial Ocicat trades`
           );
 
 
@@ -225,7 +225,7 @@ async function fetchInitialTrades() {
   }
 }
 
-// 🔁 WebSocket reconnect logic
+// WebSocket reconnect logic
 let provider = new ethers.WebSocketProvider(
   `wss://bsc-mainnet.nodereal.io/ws/v1/${variable}`
 );
